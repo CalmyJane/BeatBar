@@ -182,10 +182,14 @@ class BeatCounter {
     }
 
     void changeLength(bool up){
-      currLength = ((currLength + (up?1:-1)) + 5) % 5;
+      if (up) {
+        currLength = (currLength + 1) % 5;
+      } else {
+        currLength = (currLength - 1 + 5) % 5;
+      }
       length = lengths[currLength];
       beats = ((beats) + length) % length;
-      Serial.print((String) length + "\n");
+      Serial.print((String)length + "\n");
     }
 
 };
@@ -500,11 +504,15 @@ class LedBar{
 
 class Button{
   public:
-    bool state = false; //current state, pressed down or not
-    bool lastState = false;
+    bool state = false; //current stable, debounced state, pressed down or not
+    bool lastState = false; //last stable, debounced state
     bool pressed = false; //pressed down in this iteration?
     bool released = false; //released in this iteration?
     int pin = 0;
+    bool analogPin = false;
+    bool lastButtonState = false; //last state read from the pin, not debounced
+    int lastDebounceTime = 0;
+    int debounceDelay = 500;
 
     Button(){
       
@@ -514,12 +522,43 @@ class Button{
       //Initialize button input
       pin = pinNumber;
       pinMode(pinNumber, INPUT);
+      switch(pinNumber){
+        case A0:
+        case A1:
+        case A2:
+        case A3:
+        case A4:
+        case A5:
+        case A6:
+        case A7:
+          analogPin = true;
+        break;
+      }
     }
 
     void update(){
-      //call periodically
+      //read current value
       lastState = state;
-      state = digitalRead(pin);
+      bool reading = false;
+      if(analogPin){
+        reading = analogRead(pin) > 1000;
+      } else{
+        reading = digitalRead(pin);
+      }
+
+      //Debounce Button
+      if (reading != lastButtonState) {
+        lastDebounceTime = millis(); // Update the debounce timer
+      }
+
+      if ((millis() - lastDebounceTime) > debounceDelay) {
+        // If the button state hasn't changed for debounceDelay milliseconds, it's considered a stable state
+        if (reading != state) {
+          state = reading;
+        }
+      }
+      lastButtonState = reading;
+      //Detect valuechange
       pressed = !lastState && state; //was pressed in this iteration
       released = lastState && !state; //was released in this iteration
     }
@@ -539,16 +578,8 @@ Button rightBtn;
 void cb_onBeat(int16_t beats){
   //called at end of beat
   ledBar.update(beats, beatCounter.length);
-
-  if(beats % 4 == 0){
-    for(int i=0; i<5; i++){
-      boardLeds[i].setState(true);
-    }
-  } else{
-    for(int i=0; i<5; i++){
-      boardLeds[i].setState(false);
-    }
-  }
+  //blink red LED
+  boardLeds[4].setState(beats % 4 == 0);
 
   if(midi.connected && midi.running){
     //draw beat counter
@@ -617,7 +648,8 @@ void setup() {
   for(int i=0; i<5; i++){
     Led ld(ledPins[i]);
     boardLeds[i] = ld;
-    boardLeds[i].setState(true);
+    boardLeds[i].setState(false);
+    boardLeds[i].blink(100 + 100*i, 10+10*i, 20-i*3);
   }
   FastLED.addLeds<LED_TYPE,DATA_PIN,COLOR_ORDER>(leds, NUM_LEDS)
     .setCorrection(TypicalLEDStrip);
@@ -629,7 +661,7 @@ void loop() {
   leftBtn.update();
   rightBtn.update();
   if(rightBtn.pressed){
-    // beatCounter.changeLength(true);
+    beatCounter.changeLength(true);
   }
   
   if(leftBtn.pressed){
